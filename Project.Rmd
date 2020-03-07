@@ -1,17 +1,24 @@
 ---
-title: "01_Dataset"
-output: html_document
+title: "Time Series Project"
+author: "Max Moro and Shan Weinstock"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 3
+    toc_float: true
 ---
 
+# Functions
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(ggplot2)
 library(tswge)
 ```
+
 ```{r}
 aseWindowed = function(x,phi=0,theta=0,s=0,d=0,horizon,trainingSize=NULL,numASEs = NULL,plot = F){
-  #
   # horizon = width of each prediction window
   # trainingSize = width of the training windows. If this is not provided, it will be calculated based on the numASEs parameter
   # numASEs = number of windows to use. If provided, it is used to calculate the trainingSize
@@ -51,7 +58,7 @@ aseWindowed = function(x,phi=0,theta=0,s=0,d=0,horizon,trainingSize=NULL,numASEs
   
   #calculating the plot
   p=ggplot2::ggplot(data=plotData,aes(x=time,y=forecast,group=windowNum,color=windowNum)) +
-    geom_line() +
+    geom_line(alpha=0.5) +
     geom_line(data=data.frame(x=x,t=1:length(x)),aes(x=t,y=x),inherit.aes = F,color='red') +
     ggplot2::ylab('Values') +
     ggplot2::ggtitle("Actual Value and Rolling Windows Forecasts")
@@ -67,6 +74,8 @@ aseWindowed = function(x,phi=0,theta=0,s=0,d=0,horizon,trainingSize=NULL,numASEs
   ))
 }
 ```
+
+# Data Trasnformation
 
 ```{r}
 
@@ -101,9 +110,14 @@ dataTot = data  %>%
 
 #write_csv(dataTot,'byMonth.csv')
 
-x=dataTot$separationsCount
 x=dataTot$attritionRate
 ```
+
+# A - Identify yourself
+
+- Max Moro 
+
+- Shane Weinstock
 
 # B - Describe Data Set
 
@@ -119,7 +133,7 @@ field|Description
 ----|-----
 Period|the name of the period expressed as Year and Month
 separationsCount| Count of people who voluntary left the company
-attritionRate | the ration between separationsCount and headcount
+attritionRate | the ratio between separationsCount and headcount
 headcount| the total number of workers active in the period
 ageMeanYrs| average age of the active workers 
 tenureMeanYrs | average tenure of the active workers 
@@ -131,196 +145,291 @@ timeID | a unique ID per each period (1 for the first period up to 120 for the l
 
 
 
-# 01 - Stationarity
+# C - Stationarity
 
-## condition 1 (Mean)
+## Condition 1 (Mean)
 
 ```{r}
 tswge::plotts.wge(x)
 #tswge::plotts.wge(dataTot$attritionRate)
 ```
 
-Tha data is composed only one single representation and shows a wandering behavior with some indication of a seasonality in peaks and dips. Anyway the mean looks like is dependente on time.
+Tha data is composed only of one single representation and shows a wandering behavior with some indication of a seasonality in peaks and dips repeatining roughly every 10 to 14 periods. The mean looks like is dependente on time.
 
-As we have access to the full dataset, we tried to identify if grouping the data by CosT Centers may show a constant mean.
+As we have access to the full dataset, we tried to identify if grouping the data by Cost Centers may show a constant mean.
 
 ```{r}
 dataCC = data %>%  group_by(period,cost_center) %>% getSummary() 
 ggplot2::ggplot(data=filter(dataCC), aes(x=timeID, y=attritionRate) )+ 
-  ggplot2::geom_point(alpha=0.1)  + 
-  ggplot2::stat_summary(fun.y='mean',geom='line',color='red') + 
+  ggplot2::geom_point(alpha=0.2,shape=16)  + 
+  ggplot2::stat_summary(fun.y='mean',geom='line',color='red',size=1.2) +
   ggplot2::scale_y_log10()
 ```
 
 The chart above shows all the representations by cost center across the time, and in red the overall mean. Y axis has been trasformed with Log10 function to better shows the entire spread of the data. 
-We can also see here the the mean is dependente on time
+We can also see here the the mean is dependente on time 
 
 **Condition 1 (mean) NOT SATISFIED**
- 
-Both  charts are also  showing the the variance is also dependent on time.
 
 ## Condition 2 (Variance)
-**Condition 2 (variance) NOT SATISFIED**
 
-Having one single representation doesn't allow to group 
+Both  charts above are also  showing the the variance is dependent on time.
+
+**Condition 2 (variance) NOT SATISFIED**
 
 ## Condition (3) Autocorrelation
 
+**Autocorrelation for the first half of the data**
 
 ```{r}
 p=tswge::plotts.sample.wge(head(x,length(x)/2))
+```
+
+**Autocorrelation for the second half of the data**
+
+```{r}
 p=tswge::plotts.sample.wge(tail(x,length(x)/2))
 ```
+
 
 The charts above shows the Autocorrelation and Frequencty anlaysi of the first and second half of the data. We can see the the autocorrelation charts are very different, hence we can conclud the autocorrelation is also dependente on time
 
 **Condition 3 NOT SATISFIED**
 
-# ACF and Spectral analysis
+# D - ACF and Spectral analysis
 
 ```{r}
 p=tswge::plotts.sample.wge(x)
 ```
 
 We have a wandering behavior on the realization. The ACF shows a quasi-cyclic behacior, hint of a seasonality in the data.
-The Parzen Window shows a peak near 0 and some peaks at frequenct 0.17 and 0.34 (~6 and 3 month periods)
+The Parzen Window shows peaks at frequencies 0.17 and 0.34 (~6 and ~3 months). We can see there is also potential peak at 0.08 (12 months)
 
-To better find the frequenct we can try to apply a low-pass filter. Group data by seami-annual shuold have to define if thre is a cycle with low frequenct
+Domain knowledge indicates that seasonality in expected, as people tend to voluntary leave the company during specific months (school ends, when financial results and bonuses are communicated). We are going to use a sesonality of **3 months** for this analysis.
+
+# E - Models
+
+Before proceeding with the aic5, we need to **remove the seasonality** ($s=3 months$)
 
 ```{r}
-xYear = (dataTot %>%
-  group_by(group  = ceiling(dplyr::row_number() / 6)) %>%
-  summarise(attritionRate = sum(attritionRate)))$attritionRate
-
-p=tswge::plotts.sample.wge(xYear)
+xtr=tswge::artrans.wge(x,phi.tr=c(rep(0,2),1))
 ```
 
-The data show there is still a frequenct at 0.15, or a period of $1/0.15=6.6$ semesters, but with a ver low overall strenghts. That is equivalent to 40 months.
-Domain knowledge shows no practical significan on such low frequenct, so we can ignore it.
-
-
-# Models
+Now we can proceed with the aic5 by using the **xtr** variable
 
 ```{r}
-tswge::aic5.wge(x)
-pacf(x)
-
+aic5 = tswge::aic5.wge(xtr,p=0:5,q=0:3,type='aic')
+bic5 = tswge::aic5.wge(xtr,p=0:5,q=0:3,type='bic')
 ```
 
-The aic5.wge functions shows the model with lowest aic is an AR(1), followed by an MA(Q), and then an ARMA(1,1). 
-PACF doesn't show a normal behavior as we have a peak at 1 and one at 12. But, this could be influenced by the seasonality
+**Top 5 models using AIC**
+`r aic5`
 
-Based on Domain knowled, we think we shuold have at least a seasonal frequency of 3 month. 
+**Top 5 models using BIC**
+`r bic5`
 
-we are doing to try an 
-
-- ARMA(1,2) with seasonality of 3
-- MA(1) with seasonality of 3
-- ARMA(1,1) with seasonality of 3
-
-## Model 1: AR(1) s=3
-
-### finding Q and P
-
-
+**PACF**
 ```{r}
-p=1;q=0;s=3
-e1=tswge::est.arma.wge(x,p=p,q=q)
-message("mean: ",mean(x))
-e1[c('phi','theta','avar')]
+pacf(xtr)
 ```
 
-### ASE
-
+**ACF**
 ```{r}
-ase = function(f,x){mean((f - tail(x,length(f)))^2)}
-m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = T)
-message("ASE is: ",ase(m1$f,x))
+p=tswge::plotts.sample.wge(xtr)
 ```
 
 
-### windowsASE
+The PACF shows signals of AR(3), but there is an erratic patern up to AR(9), we can't be sure there is a pure AR model. The  sample autocorrelation shows cycling pattern extending above the value of 0.5, so we should not have an MA only model
+
+The aic5.wge with AIC metric shows an ARMA(3,2) and ARMA(4,2) as best models. The aic.wge with BURG metric shows an ARMA(3,2) and an AR(3) as good cadidates for the final model.
+
+We are going to try following models
+
+- ARMA(3,2) with seasonality of 3 months
+- ARMA(4,2) with seasonality of 3 months
+- AR(3) with seasonality of 3 months
+
+## Model 1: ARMA(3,2)  s=3
+
+### a. Factored Form
 
 ```{r}
-ase1=aseWindowed(x,phi=e1$phi,theta = e1$theta,s=s,horizon=12,numASEs = 30)
-ase1$plot
-message("MEan Windowed ASE:",ase1$meanASE)
+p=3;q=2;s=3
+es=tswge::est.arma.wge(xtr,p=p,q=q)
 ```
-### FORECAST 12 months
 
+**Phis**
 ```{r}
-m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = F)
+es$phi
+if(p>1) tswge::factor.wge(phi=es$phi)
 ```
- 
- 
-## Model 2: MA(1) s=3
-
-### finding Q and P
-
-
+**Thetas**
 ```{r}
-p=0;q=1;s=3
-e1=tswge::est.arma.wge(x,p=p,q=q)
-message("mean: ",mean(x))
-e1[c('phi','theta','avar')]
+es$theta
+if(q>1) tswge::factor.wge(phi=es$theta)
+m=tswge::fore.aruma.wge(x,phi = es$phi,theta=es$theta,s=s,n.ahead = 12,lastn = F,plot=F)
+message('Variance: ',m$wnv)
+message('Mean: ',mean(x))
 ```
 
-### ASE
+$$(1-B^3)(1+0.3055B+0.2485B^2+0.2817B^3)(X_t-0.00734) = (1+0.9476B+0.9635B^2)a_t$$
+$$\hat{\sigma}^2_a = 4.532*10^{-6}$$ 
+
+### b. AIC
+
+AIC for this model is  `r aic5[aic5[,1]==p & aic5[,2]==q,3]`
+
+
+### c. ASE
 
 ```{r}
 ase = function(f,x){mean((f - tail(x,length(f)))^2)}
-m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = T)
-message("ASE is: ",ase(m1$f,x))
+m = tswge::fore.aruma.wge(x,phi = es$phi,theta = es$theta,s=s,n.ahead = 12,lastn = T)
+ase = ase(m$f,x)
+message("ASE is: ",ase)
+ase1=ase
 ```
 
 
-### windowsASE
+#### Rolling Windows ASE
 
 ```{r}
-ase1=aseWindowed(x,phi=e1$phi,theta = e1$theta,s=s,horizon=6,numASEs = 30)
-ase1$plot
-message("MEan Windowed ASE:",ase1$meanASE)
+asew=aseWindowed(x,phi=es$phi,theta = es$theta,s=s,horizon=12,numASEs = 30)
+asew$plot
+message("MEan Windowed ASE:",asew$meanASE)
+aseW1=asew$meanASE
 ```
-### FORECAST 12 months
+### d. Forecast 12 months
 
 ```{r}
-m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = F)
+m1 = tswge::fore.aruma.wge(x,phi = es$phi,theta = es$theta,s=s,n.ahead = 12,lastn = F)
 ```
  
  
  
-## Model 3: ARMA(1,1) s=3
+## Model 2: ARMA(4,2)  s=3
 
-### finding Q and P
-
+### a. Factored Form
 
 ```{r}
-p=1;q=1;s=3
-e1=tswge::est.arma.wge(x,p=p,q=q)
-message("mean: ",mean(x))
-e1[c('phi','theta','avar')]
+p=4;q=2;s=3
+es=tswge::est.arma.wge(xtr,p=p,q=q)
+es[c('phi','theta','avar')]
 ```
 
-### ASE
+**Phis**
+```{r}
+es$phi
+if(p>1) tswge::factor.wge(phi=es$phi)
+```
+**Thetas**
+```{r}
+es$theta
+if(q>1) tswge::factor.wge(phi=es$theta)
+m=tswge::fore.aruma.wge(x,phi = es$phi,theta=es$theta,s=s,n.ahead = 12,lastn = F,plot=F)
+message('Variance: ',m$wnv)
+message('Mean: ',mean(x))
+```
+
+$$(1-B^3)(1+0.4071B+0.2873B^2+0.3468B^3+0.2622B^4)(X_t-0.00734) = (1+1.0002B+0.996B^2)a_t$$ 
+
+$$\hat{\sigma}^2_a = 1.070*10^{-5}$$ 
+
+
+### b. AIC
+
+AIC for this model is  `r aic5[aic5[,1]==p & aic5[,2]==q,3]`
+
+### c. ASE
 
 ```{r}
 ase = function(f,x){mean((f - tail(x,length(f)))^2)}
-m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = T)
-message("ASE is: ",ase(m1$f,x))
+m = tswge::fore.aruma.wge(x,phi = es$phi,theta = es$theta,s=s,n.ahead = 12,lastn = T)
+ase = ase(m$f,x)
+message("ASE is: ",ase)
+ase2=ase
 ```
 
 
-### windowsASE
+#### Rolling Windows ASE
 
 ```{r}
-ase1=aseWindowed(x,phi=e1$phi,theta = e1$theta,s=s,horizon=6,numASEs = 30)
-ase1$plot
-message("MEan Windowed ASE:",ase1$meanASE)
+asew=aseWindowed(x,phi=es$phi,theta = es$theta,s=s,horizon=12,numASEs = 30)
+asew$plot
+message("MEan Windowed ASE:",asew$meanASE)
+aseW2=asew$meanASE
 ```
-### FORECAST 12 months
+### d. Forecast 12 months
 
 ```{r}
-m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = F)
+m1 = tswge::fore.aruma.wge(x,phi = es$phi,theta = es$theta,s=s,n.ahead = 12,lastn = F)
 ```
  
  
+ 
+## Model 3: AR(3)  s=3
+
+### a. Factored Form
+
+```{r}
+p=3;q=0;s=3
+message("Finding p using MLE:")
+esM=tswge::est.ar.wge(xtr,p=p,type='mle')
+message("Finding p using BURG:")
+esB=tswge::est.ar.wge(xtr,p=p,type='burg')
+es=esM
+```
+
+We see there is very small differnece between MLE and BURG, we use MLE for the slightest higher Abs Reciprocal
+
+
+**Phis**
+```{r}
+es$phi
+m=tswge::fore.aruma.wge(x,phi = es$phi,s=s,n.ahead = 12,lastn = F,plot=F)
+message('Variance: ',m$wnv)
+message('Mean: ',mean(x))
+```
+
+$$(1-B^3)(1-0.332B+0.0347B^2+0.4645B^3)(X_t-0.00734) = a_t$$
+$$\hat{\sigma}^2_a = 5.376*10^{-6}$$   
+
+### b. AIC
+
+AIC for this model is  `r aic5[aic5[,1]==p & aic5[,2]==q,3]`
+
+### c. ASE
+
+```{r}
+ase = function(f,x){mean((f - tail(x,length(f)))^2)}
+m = tswge::fore.aruma.wge(x,phi = es$phi,s=s,n.ahead = 12,lastn = T)
+ase = ase(m$f,x)
+message("ASE is: ",ase)
+ase3=ase
+```
+
+
+#### Rolling Windows ASE
+
+```{r}
+asew=aseWindowed(x,phi=es$phi,theta = 0,s=s,horizon=12,numASEs = 30)
+asew$plot
+message("MEan Windowed ASE:",asew$meanASE)
+aseW3=asew$meanASE
+```
+### d. Forecast 12 months
+
+```{r}
+m1 = tswge::fore.aruma.wge(x,phi = es$phi,s=s,n.ahead = 12,lastn = F)
+```
+ 
+# Summary
+ 
+ MODEL | ASE | Rolling Windows ASE 
+ ------|-----|-------------
+ ARMA(1,2) s=3 | $`r ase1`$ | $`r aseW1`$
+ ARMA(2,1) s=3 | $`r ase2`$ | $`r aseW2`$
+ ARMA(1,0) s=3 | $`r ase3`$ | $`r aseW3`$
+
+
+The model ARMA(1,2) with seasonality of 3 months shows the lowest ASE and Rolling Windows ASE.
