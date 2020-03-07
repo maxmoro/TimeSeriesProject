@@ -203,7 +203,7 @@ p=tswge::plotts.sample.wge(x)
 ```
 
 We have a wandering behavior on the realization. The ACF shows a quasi-cyclic behacior, hint of a seasonality in the data.
-The Parzen Window shows peaks at frequencies 0.17 and 0.34 (~6 and ~3 months). We can see there is also potential peak at 0.08 (12 months)
+The Parzen Window shows peaks at frequencies 0.17 and 0.34 (~6 and ~3 months).
 
 Domain knowledge indicates that seasonality in expected, as people tend to voluntary leave the company during specific months (school ends, when financial results and bonuses are communicated). We are going to use a sesonality of **3 months** for this analysis.
 
@@ -212,7 +212,7 @@ Domain knowledge indicates that seasonality in expected, as people tend to volun
 Before proceeding with the aic5, we need to **remove the seasonality** ($s=3 months$)
 
 ```{r}
-xtr=tswge::artrans.wge(x,phi.tr=c(rep(0,2),1))
+xtr=tswge::artrans.wge(x,phi.tr=c(0,0,1))
 ```
 **ACF and Frequency after transformation**
 
