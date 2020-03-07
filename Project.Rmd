@@ -1,0 +1,326 @@
+---
+title: "01_Dataset"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(tswge)
+```
+```{r}
+aseWindowed = function(x,phi=0,theta=0,s=0,d=0,horizon,trainingSize=NULL,numASEs = NULL,plot = F){
+  #
+  # horizon = width of each prediction window
+  # trainingSize = width of the training windows. If this is not provided, it will be calculated based on the numASEs parameter
+  # numASEs = number of windows to use. If provided, it is used to calculate the trainingSize
+  # all other parameters follows the paramteres of the tswge::fore.aruma.wfe function
+  #
+  library(ggplot2)
+  n=length(x)
+  if(!is.null(numASEs))  {trainingSize = n  - horizon +1 -numASEs }
+  if(is.null(trainingSize)) {message("Missing numASEs or Training Size");return(NULL)} 
+  
+  #calculating windows
+  windows=1:(n-(trainingSize + horizon) + 1)
+  
+  #function to caluclate the windows (sapply is faster and more efficient than for loop)
+  ASEOut = sapply(windows,function(i){
+    #calculating the current window parameters
+    winStart = i
+    winEnd = (i+(trainingSize-1))
+    horStart = winEnd+1
+    horEnd = horStart + horizon-1
+    
+    #calculating the forecasts with the  aruma function 
+    f = tswge::fore.aruma.wge(x[winStart:winEnd],phi = phi, theta = theta, s = s, d = d
+                              ,n.ahead = horizon,plot=F)
+    
+    #calculating the ASE for current windows
+    ASE = mean((x[horStart:horEnd] - f$f)^2)
+    
+    #storing data for the Ploy
+    plotData = data.frame(windowNum = rep(i,horizon), forecast = f$f,time = horStart:horEnd)
+    return(list(ASE=ASE,plotData=plotData))
+  })
+  
+  #combining the output from the sapply in two variables
+  plotData= reduce(ASEOut['plotData',],rbind) #for the plot
+  ASEs = reduce(ASEOut['ASE',],c) #for calculating the mean ASE
+  
+  #calculating the plot
+  p=ggplot2::ggplot(data=plotData,aes(x=time,y=forecast,group=windowNum,color=windowNum)) +
+    geom_line() +
+    geom_line(data=data.frame(x=x,t=1:length(x)),aes(x=t,y=x),inherit.aes = F,color='red') +
+    ggplot2::ylab('Values') +
+    ggplot2::ggtitle("Actual Value and Rolling Windows Forecasts")
+  if(plot)  plot(p)
+  
+  #returning everyyhing as a list
+  return(list(ASEs = ASEs
+              ,meanASE = mean(ASEs)
+              ,windows = windows
+              ,windowsSize = trainingSize
+              ,plot=p
+              ,plotData = plotData
+  ))
+}
+```
+
+```{r}
+
+data = readRDS('TO_cc_data.rds') %>%
+  filter(snap_fiscal_month_sort >= 201001
+         ,snap_fiscal_month_sort <= 201909) %>%
+  rename(period = snap_fiscal_month_sort)  %>%
+  arrange(period) 
+data$timeID = group_indices(data,period)
+
+# Summaries
+getSummary = function(x){x %>% 
+    summarise(separationsCount = sum(cnt_non_RIF_separations,na.rm=T)
+              ,attritionRate = sum(cnt_non_RIF_separations,na.rm=T)/sum(headcount,na.rm=T)
+              ,headcount = sum(headcount,na.rm=T)
+              ,ageMeanYrs = sum(tot_age,na.rm=T)/sum(headcount,na.rm=T)/12
+              ,tenureMeanYrs = sum(tot_tenure,na.rm=T)/sum(headcount,na.rm=T)/12
+              ,recognitionEvents = sum(spot_events+points_events+star_events,na.rm=T)
+              ,supervisorsCount = sum(cnt_spvs,na.rm=T)
+              ,lowPerffCount = sum(tot_ppa_low,na.rm=T)
+              ,highPerfCount = sum(tot_ppa_high,na.rm=T)
+              ,timeID = max(timeID)
+    ) 
+}
+# summary by CC
+#dataCC = data %>%  group_by(period,cost_center) %>% getSummary() 
+#write_csv(dataCC,'byCostCenter.csv')
+
+dataTot = data  %>%
+  group_by(period) %>%
+  getSummary() %>% ungroup()
+
+#write_csv(dataTot,'byMonth.csv')
+
+x=dataTot$separationsCount
+x=dataTot$attritionRate
+```
+
+# B - Describe Data Set
+
+The Data set represents the number of workers who coluntary left a company between 2010 and 2019. The data is real, but is anonymized to maintin the confidentiality of the company.
+
+The business request is forecast the attrition rate  for the entire company for the next 12 months. 
+
+The data set is composed by a single representation with multiple features that can be used to idenitify and build multi-variate models to better forecast the attrition trend.
+
+The data set has  the following columsn
+
+field|Description
+----|-----
+Period|the name of the period expressed as Year and Month
+separationsCount| Count of people who voluntary left the company
+attritionRate | the ration between separationsCount and headcount
+headcount| the total number of workers active in the period
+ageMeanYrs| average age of the active workers 
+tenureMeanYrs | average tenure of the active workers 
+recognitionEvents | count of all the monetary and non monetary recognitions provided to the workers during the period
+supervisorsCount | count of all workers that manage other workers
+lowPerfCount | count of all workers that have a low perfomance annual rating
+highPerfCount | count of all workers that have an high perfomance annual rating 
+timeID | a unique ID per each period (1 for the first period up to 120 for the last period)
+
+
+
+# 01 - Stationarity
+
+## condition 1 (Mean)
+
+```{r}
+tswge::plotts.wge(x)
+#tswge::plotts.wge(dataTot$attritionRate)
+```
+
+Tha data is composed only one single representation and shows a wandering behavior with some indication of a seasonality in peaks and dips. Anyway the mean looks like is dependente on time.
+
+As we have access to the full dataset, we tried to identify if grouping the data by CosT Centers may show a constant mean.
+
+```{r}
+dataCC = data %>%  group_by(period,cost_center) %>% getSummary() 
+ggplot2::ggplot(data=filter(dataCC), aes(x=timeID, y=attritionRate) )+ 
+  ggplot2::geom_point(alpha=0.1)  + 
+  ggplot2::stat_summary(fun.y='mean',geom='line',color='red') + 
+  ggplot2::scale_y_log10()
+```
+
+The chart above shows all the representations by cost center across the time, and in red the overall mean. Y axis has been trasformed with Log10 function to better shows the entire spread of the data. 
+We can also see here the the mean is dependente on time
+
+**Condition 1 (mean) NOT SATISFIED**
+ 
+Both  charts are also  showing the the variance is also dependent on time.
+
+## Condition 2 (Variance)
+**Condition 2 (variance) NOT SATISFIED**
+
+Having one single representation doesn't allow to group 
+
+## Condition (3) Autocorrelation
+
+
+```{r}
+p=tswge::plotts.sample.wge(head(x,length(x)/2))
+p=tswge::plotts.sample.wge(tail(x,length(x)/2))
+```
+
+The charts above shows the Autocorrelation and Frequencty anlaysi of the first and second half of the data. We can see the the autocorrelation charts are very different, hence we can conclud the autocorrelation is also dependente on time
+
+**Condition 3 NOT SATISFIED**
+
+# ACF and Spectral analysis
+
+```{r}
+p=tswge::plotts.sample.wge(x)
+```
+
+We have a wandering behavior on the realization. The ACF shows a quasi-cyclic behacior, hint of a seasonality in the data.
+The Parzen Window shows a peak near 0 and some peaks at frequenct 0.17 and 0.34 (~6 and 3 month periods)
+
+To better find the frequenct we can try to apply a low-pass filter. Group data by seami-annual shuold have to define if thre is a cycle with low frequenct
+
+```{r}
+xYear = (dataTot %>%
+  group_by(group  = ceiling(dplyr::row_number() / 6)) %>%
+  summarise(attritionRate = sum(attritionRate)))$attritionRate
+
+p=tswge::plotts.sample.wge(xYear)
+```
+
+The data show there is still a frequenct at 0.15, or a period of $1/0.15=6.6$ semesters, but with a ver low overall strenghts. That is equivalent to 40 months.
+Domain knowledge shows no practical significan on such low frequenct, so we can ignore it.
+
+
+# Models
+
+```{r}
+tswge::aic5.wge(x)
+pacf(x)
+
+```
+
+The aic5.wge functions shows the model with lowest aic is an AR(1), followed by an MA(Q), and then an ARMA(1,1). 
+PACF doesn't show a normal behavior as we have a peak at 1 and one at 12. But, this could be influenced by the seasonality
+
+Based on Domain knowled, we think we shuold have at least a seasonal frequency of 3 month. 
+
+we are doing to try an 
+
+- ARMA(1,2) with seasonality of 3
+- MA(1) with seasonality of 3
+- ARMA(1,1) with seasonality of 3
+
+## Model 1: AR(1) s=3
+
+### finding Q and P
+
+
+```{r}
+p=1;q=0;s=3
+e1=tswge::est.arma.wge(x,p=p,q=q)
+message("mean: ",mean(x))
+e1[c('phi','theta','avar')]
+```
+
+### ASE
+
+```{r}
+ase = function(f,x){mean((f - tail(x,length(f)))^2)}
+m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = T)
+message("ASE is: ",ase(m1$f,x))
+```
+
+
+### windowsASE
+
+```{r}
+ase1=aseWindowed(x,phi=e1$phi,theta = e1$theta,s=s,horizon=12,numASEs = 30)
+ase1$plot
+message("MEan Windowed ASE:",ase1$meanASE)
+```
+### FORECAST 12 months
+
+```{r}
+m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = F)
+```
+ 
+ 
+## Model 2: MA(1) s=3
+
+### finding Q and P
+
+
+```{r}
+p=0;q=1;s=3
+e1=tswge::est.arma.wge(x,p=p,q=q)
+message("mean: ",mean(x))
+e1[c('phi','theta','avar')]
+```
+
+### ASE
+
+```{r}
+ase = function(f,x){mean((f - tail(x,length(f)))^2)}
+m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = T)
+message("ASE is: ",ase(m1$f,x))
+```
+
+
+### windowsASE
+
+```{r}
+ase1=aseWindowed(x,phi=e1$phi,theta = e1$theta,s=s,horizon=6,numASEs = 30)
+ase1$plot
+message("MEan Windowed ASE:",ase1$meanASE)
+```
+### FORECAST 12 months
+
+```{r}
+m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = F)
+```
+ 
+ 
+ 
+## Model 3: ARMA(1,1) s=3
+
+### finding Q and P
+
+
+```{r}
+p=1;q=1;s=3
+e1=tswge::est.arma.wge(x,p=p,q=q)
+message("mean: ",mean(x))
+e1[c('phi','theta','avar')]
+```
+
+### ASE
+
+```{r}
+ase = function(f,x){mean((f - tail(x,length(f)))^2)}
+m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = T)
+message("ASE is: ",ase(m1$f,x))
+```
+
+
+### windowsASE
+
+```{r}
+ase1=aseWindowed(x,phi=e1$phi,theta = e1$theta,s=s,horizon=6,numASEs = 30)
+ase1$plot
+message("MEan Windowed ASE:",ase1$meanASE)
+```
+### FORECAST 12 months
+
+```{r}
+m1 = tswge::fore.aruma.wge(x,phi = e1$phi,theta = e1$theta,s=s,n.ahead = 12,lastn = F)
+```
+ 
+ 
