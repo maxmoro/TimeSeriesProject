@@ -214,6 +214,11 @@ Before proceeding with the aic5, we need to **remove the seasonality** ($s=3 mon
 ```{r}
 xtr=tswge::artrans.wge(x,phi.tr=c(rep(0,2),1))
 ```
+**ACF and Frequency after transformation**
+
+```{r}
+p=tswge::plotts.sample.wge(xtr)
+```
 
 Now we can proceed with the aic5 by using the **xtr** variable
 
