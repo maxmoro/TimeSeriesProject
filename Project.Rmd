@@ -209,10 +209,21 @@ Domain knowledge indicates that seasonality in expected, as people tend to volun
 
 # E - Models
 
+Let's see if we have the s=3 or s=6 seasonality in the data
+
+```{r}
+tswge::factor.wge(phi=c(rep(0,5),1))
+tswge::factor.wge(phi=c(rep(0,2),1))
+e=tswge::est.ar.wge(x,p=10,type='burg')
+```
+
+we have a good evidence that the factors of **s=3** $(1-B^3)$ are present in the data. Frequencies fromm $(1-B^3)$ with value $0$ and $0.33$ are present in the data as 0,0 and 0.336, and the factors $(1-1B)$ and $(1+1B+1B^2)$ are present in the data as $(1-0.89B)$ and $(1-+0.8992B+0.754B^2)$. 
+
+
 Before proceeding with the aic5, we need to **remove the seasonality** ($s=3 months$)
 
 ```{r}
-xtr=tswge::artrans.wge(x,phi.tr=c(0,0,1))
+xtr=tswge::artrans.wge(x,phi.tr=c(rep(0,2),1))
 ```
 **ACF and Frequency after transformation**
 
@@ -244,7 +255,7 @@ p=tswge::plotts.sample.wge(xtr)
 ```
 
 
-The PACF shows signals of AR(3), but there is an erratic patern up to AR(9), we can't be sure there is a pure AR model. The  sample autocorrelation shows cycling pattern extending above the value of 0.5, so we should not have an MA only model
+The PACF shows  an erratic patern up to AR(9), we can't be sure there is a pure AR model. The  sample autocorrelation shows cycling pattern extending above the value of 0.5, so we should not have an MA only model
 
 The aic5.wge with AIC metric shows an ARMA(3,2) and ARMA(4,2) as best models. The aic.wge with BURG metric shows an ARMA(3,2) and an AR(3) as good cadidates for the final model.
 
@@ -272,13 +283,12 @@ if(p>1) tswge::factor.wge(phi=es$phi)
 ```{r}
 es$theta
 if(q>1) tswge::factor.wge(phi=es$theta)
-m=tswge::fore.aruma.wge(x,phi = es$phi,theta=es$theta,s=s,n.ahead = 12,lastn = F,plot=F)
-message('Variance: ',m$wnv)
+message('Variance: ',es$avar)
 message('Mean: ',mean(x))
 ```
 
 $$(1-B^3)(1+0.3055B+0.2485B^2+0.2817B^3)(X_t-0.00734) = (1+0.9476B+0.9635B^2)a_t$$
-$$\hat{\sigma}^2_a = 4.532*10^{-6}$$ 
+$$\hat{\sigma}^2_a = 4.019*10^{-6}$$ 
 
 ### b. AIC
 
@@ -331,14 +341,13 @@ if(p>1) tswge::factor.wge(phi=es$phi)
 ```{r}
 es$theta
 if(q>1) tswge::factor.wge(phi=es$theta)
-m=tswge::fore.aruma.wge(x,phi = es$phi,theta=es$theta,s=s,n.ahead = 12,lastn = F,plot=F)
-message('Variance: ',m$wnv)
+message('Variance: ',es$avar)
 message('Mean: ',mean(x))
 ```
 
 $$(1-B^3)(1+0.4071B+0.2873B^2+0.3468B^3+0.2622B^4)(X_t-0.00734) = (1+1.0002B+0.996B^2)a_t$$ 
 
-$$\hat{\sigma}^2_a = 1.070*10^{-5}$$ 
+$$\hat{\sigma}^2_a = 4.6616*10^{-6}$$ 
 
 
 ### b. AIC
@@ -391,13 +400,12 @@ We see there is very small differnece between MLE and BURG, we use MLE for the s
 **Phis**
 ```{r}
 es$phi
-m=tswge::fore.aruma.wge(x,phi = es$phi,s=s,n.ahead = 12,lastn = F,plot=F)
-message('Variance: ',m$wnv)
+message('Variance: ',es$avar)
 message('Mean: ',mean(x))
 ```
 
 $$(1-B^3)(1-0.332B+0.0347B^2+0.4645B^3)(X_t-0.00734) = a_t$$
-$$\hat{\sigma}^2_a = 5.376*10^{-6}$$   
+$$\hat{\sigma}^2_a = 5.259*10^{-6}$$   
 
 ### b. AIC
 
