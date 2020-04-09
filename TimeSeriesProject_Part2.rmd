@@ -1,0 +1,486 @@
+---
+title: "Time Series Project"
+author: "Max Moro and Shane Weinstock"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+# Functions
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(tswge)
+library(vars)
+```
+
+```{r}
+ase = function(f,x){
+  mean((f - tail(x,length(f)))^2)
+}
+```
+
+# Data Loading and Transformation
+
+```{r}
+#Loading data
+data = readRDS('TO_cc_data.rds') %>%
+  filter(snap_fiscal_month_sort >= 201001
+         ,snap_fiscal_month_sort <= 201909) %>%
+  rename(period = snap_fiscal_month_sort)  %>%
+  arrange(period) 
+data$timeID = group_indices(data,period)
+# Calculating Summaries
+getSummary = function(x){x %>% 
+    summarise(separationsCount = sum(cnt_non_RIF_separations,na.rm=T)
+              ,attritionRate = sum(cnt_non_RIF_separations,na.rm=T)/sum(headcount,na.rm=T)
+              ,headcount = sum(headcount,na.rm=T)
+              ,ageMeanYrs = sum(tot_age,na.rm=T)/sum(headcount,na.rm=T)/12
+              ,tenureMeanYrs = sum(tot_tenure,na.rm=T)/sum(headcount,na.rm=T)/12
+              ,recognitionEvents = sum(spot_events+points_events+star_events,na.rm=T)
+              ,recognitionEventsMean = recognitionEvents / headcount
+              ,supervisorsCount = sum(cnt_spvs,na.rm=T)
+              ,workersPerSupervisor = headcount / supervisorsCount
+              ,lowPerfCount = sum(tot_ppa_low,na.rm=T)
+              ,lowPerfRate = lowPerfCount / headcount
+              ,highPerfCount = sum(tot_ppa_high,na.rm=T)
+              ,highPerfRate = highPerfCount / headcount
+              ,timeID = max(timeID)
+    ) 
+}
+#calculating Totals
+dataTot = data  %>%
+  group_by(period) %>%
+  getSummary() %>% ungroup()
+#saving to X variable
+x=dataTot$attritionRate
+```
+
+# 1 - Describe Data Set
+
+The Data set represents the number of workers who coluntary left a company between 2010 and 2019. The data is real, but is anonymized to maintin the confidentiality of the company.
+
+The business request is forecast the attrition rate  for the entire company for the next 12 months. 
+
+The data set is composed by a single representation with multiple features that can be used to idenitify and build multi-variate models to better forecast the attrition trend.
+
+The data set has  the following columsn
+
+field|Description
+----|-----
+Period| name of the period expressed as Year and Month
+separationsCount| count of people who voluntary left the company
+**attritionRate** | ratio between separationsCount and headcount (the target variable)
+headcount| total number of workers active in the period
+ageMeanYrs| average age of the active workers 
+tenureMeanYrs | average tenure of the active workers 
+recognitionEvents | count of all the monetary and non monetary recognitions provided to the workers during the period
+recognitionEventsMean | average number of recognitions each worker received
+supervisorsCount | count of all workers that manage other workers
+workersPerSupervisor | average number of workers reporting to each supervisor
+lowPerfCount | count of all workers that have a low perfomance annual rating
+lowPerfRate | rate of low performers for the entire organization
+highPerfCount | count of all workers that have an high perfomance annual rating
+highPerfRate | rate of high performers for the entire organization
+timeID | a unique ID per each period (1 for the first period up to 120 for the last period)
+
+# 2 - The response from the Dataset
+
+We selected the Variable **attritionRate** as our response, it represents the ratio of poeple who voluntary left the company per each month.
+
+# 3 - The Scenario
+
+Attrition is an important factor for the company as it operates in a very niche market, requiring workers with very advanced technical knowledge. Once an important worker left the company it takes many months to hire and train a replacement.
+The berst solution to the problem is to predict the trend of attrition and which factors are correlated. The company can operate on these factors to reduce the future attrition.
+
+# 4 - MODELS
+
+The models are  trained with a dataset without the most recent 12 months, we will use this portion to test the model performance. 
+
+```{r}
+TestSize = 12
+```
+
+
+## ARMA(3,2)  s=3
+
+### a. ACF and Spectral analysis
+
+```{r}
+p=tswge::plotts.sample.wge(x)
+```
+
+We have a wandering behavior on the realization. The ACF shows a quasi-cyclic behacior, hint of a seasonality in the data.
+The Parzen Window shows peaks at frequencies 0.17 and 0.34 (~6 and ~3 months).
+
+Domain knowledge indicates that seasonality in expected, as people tend to voluntary leave the company during specific months (school ends, when financial results and bonuses are communicated). We are going to use a sesonality of **3 months** for this analysis.
+
+### b. Check for seasonality
+
+Let's see if we have the s=3 or s=6 seasonality in the data
+
+```{r}
+tswge::factor.wge(phi=c(rep(0,5),1))
+tswge::factor.wge(phi=c(rep(0,2),1))
+e=tswge::est.ar.wge(x,p=10,type='burg')
+```
+
+we have a good evidence that the factors of **s=3** $(1-B^3)$ are present in the data. Frequencies fromm $(1-B^3)$ with value $0$ and $0.33$ are present in the data as 0,0 and 0.336, and the factors $(1-1B)$ and $(1+1B+1B^2)$ are present in the data as $(1-0.89B)$ and $(1-+0.8992B+0.754B^2)$. 
+
+
+Before proceeding with the aic5, we need to **remove the seasonality** ($s=3 months$)
+
+```{r}
+xtr=tswge::artrans.wge(x,phi.tr=c(rep(0,2),1))
+```
+**ACF and Frequency after transformation**
+
+```{r}
+p=tswge::plotts.sample.wge(xtr)
+```
+
+Now we can proceed with the aic5 by using the **xtr** variable
+
+```{r}
+aic5 = tswge::aic5.wge(xtr,p=0:5,q=0:3,type='aic')
+bic5 = tswge::aic5.wge(xtr,p=0:5,q=0:3,type='bic')
+```
+
+**Top 5 models using AIC**
+`r aic5`
+
+**Top 5 models using BIC**
+`r bic5`
+
+**PACF**
+```{r}
+pacf(xtr)
+```
+
+**ACF**
+```{r}
+p=tswge::plotts.sample.wge(xtr)
+```
+
+
+The PACF shows  an erratic patern up to AR(9), we can't be sure there is a pure AR model. The  sample autocorrelation shows cycling pattern extending above the value of 0.5, so we should not have an MA only model
+
+The aic5.wge with AIC metric shows an ARMA(3,2) and ARMA(4,2) as best models. The aic.wge with BURG metric shows an ARMA(3,2) and an AR(3) as good cadidates for the final model.
+
+We are going to try following models
+
+- ARMA(3,2) with seasonality of 3 months
+- ARMA(4,2) with seasonality of 3 months
+- AR(3) with seasonality of 3 months
+
+
+
+### c. Factored Form
+
+```{r}
+p=3;q=2;s=3
+es=tswge::est.arma.wge(xtr,p=p,q=q)
+```
+
+**Phis**
+```{r}
+es$phi
+if(p>1) tswge::factor.wge(phi=es$phi)
+```
+**Thetas**
+```{r}
+es$theta
+if(q>1) tswge::factor.wge(phi=es$theta)
+message('Variance: ',es$avar)
+message('Mean: ',mean(x))
+```
+
+$$(1-B^3)(1+0.3055B+0.2485B^2+0.2817B^3)(X_t-0.00734) = (1+0.9476B+0.9635B^2)a_t$$
+$$\hat{\sigma}^2_a = 4.019*10^{-6}$$ 
+
+### d. AIC
+
+AIC for this model is  `r aic5[aic5[,1]==p & aic5[,2]==q,3]`
+
+
+### e. ASE
+
+```{r}
+armaPred= tswge::fore.aruma.wge(x,phi = es$phi,theta = es$theta,s=s,n.ahead = TestSize,lastn = T)
+armaASE = ase(armaPred$f,x)
+```
+
+The ASE of the model is `r format(round(armaASE,8),scientific=FALSE)`
+
+## VAR
+
+### a. Selecting multivariate data
+
+As the attrition rate is a proportion of the headcount ($terminations / headcount$), we selected all the endogenous variables that are meaningful for the problem and are expressed as a rate of the headcount. This avoids using a variables that by design are correlated to  the headcount (example: number of supervisors) instead of the attrition rate. 
+
+In addition, we noted that the recognition variable has data only for the past 2 years. We decided to remove this variable as it has too much missing data.
+
+We specified a seasaonlity of 3 months as suggested by the ARMA model.
+
+We are not specifying any exogenous variable as the company has no indication of future values for these variables.
+
+
+```{r}
+X=dataTot %>% dplyr::select(attritionRate,ageMeanYrs, tenureMeanYrs,  workersPerSupervisor, lowPerfRate, highPerfRate)
+
+
+XTrain = head(X,nrow(X)-TestSize)
+XTest  = tail(X,TestSize) #12 months
+```
+
+### b. Checking Cross Correlations
+
+**Attrition and age**
+```{r fig.height=4, fig.width=8}
+par(mfrow=c(2,3),mar=c(3,2,3,2))
+with(XTrain,{
+  ccf(attritionRate,ageMeanYrs)
+  ccf(attritionRate,tenureMeanYrs)
+  ccf(attritionRate,workersPerSupervisor)
+  ccf(attritionRate,lowPerfRate)
+  ccf(attritionRate,highPerfRate)
+})
+```
+
+The most significant correlations with the Attrition Rate are **Mean Age** with lags of 5 and -5, **tenure** has a significant correlation with lag 6, also **workers per supervisor** has a correlation at lag 5. **Low Performers Ratio** is correlated with a lag of -2.
+
+We can deduct the model may use lags up to 6.
+
+```{r}
+vars::VARselect(XTrain, lag.max = 7, type = 'trend',season = 3, exogen = NULL)
+```
+
+The model selected a lag order of 1 using a BIC measure ($HQ(n)$).
+
+
+### c. Model Training
+
+We noticed the model has a better performance and overall behavior when using higher number of lags, with the optimal at lag=6.
+
+```{r}
+varFit=VAR(XTrain,p=6,type='trend',season=3,exogen=NULL)
+summary(varFit$varresult$attritionRate)
+```
+
+We notice the model has a pvalue less than 0.05, hence we can reject the hypothesis the model is not significant
+
+### d. AIC 
+
+The AIC of the model is `r AIC(varFit)`
+
+**AIC**
+```{r}
+AIC(varFit)
+```
+
+### e. Model Testing Plot
+
+```{r}
+varPred = predict(varFit,n.ahead=TestSize)$fcst$attritionRate[,1]
+varDataPred = cbind(dataTot,pred=NA)
+varDataPred[(nrow(varDataPred)-TestSize+1):nrow(varDataPred),]$pred = varPred
+ggplot(data=varDataPred,aes(x=timeID,y=attritionRate)) +
+  geom_line() + 
+  geom_line(aes(y=pred),color='red')
+
+```
+### f. ASE
+
+```{r}
+varASE = ase(varPred,tail(dataTot,TestSize)$attritionRate)
+```
+
+The ASE of the model is `r format(round(varASE,8),scientific=FALSE)`
+
+## Neural Network
+
+### a. Selecting multivariate data
+
+We selected the same dataset used for the VAR section
+
+```{r}
+tsTrain = ts(XTrain,start=c(2010,1),frequency = 12)
+tsTest = ts(XTest,start=c(2018,10),frequency = 12)
+tsAll =   ts(rbind(XTrain,XTest),start=c(2010,1),frequency = 12)
+
+```
+
+### b. Model Training
+
+We train the Nerual Network Model by using 20 repetitions and using a difforder of 1 and 3, to reflect the trend and the seasonality we found in previous models. We set lag search parameter from 1 to 6 to reflect the lag we found during the analysis for the VAR model
+
+```{r}
+set.seed(1701)
+library(nnfor)
+nnFit = nnfor::mlp(y=tsTrain[,'attritionRate'],reps=20
+                   ,xreg = data.frame(tsAll[,colnames(tsAll) != 'attritionRate'])
+                   ,difforder = c(1,3),hd.auto.type = 'cv',hd=NULL,lags=1:6)
+nnFit
+plot(nnFit)
+```
+
+The Neural Network Model used 5 regressors with a different selection of lags. 
+
+### c. Model Testing Plot
+
+```{r}
+nnTest=forecast(nnFit,h=TestSize,xreg = data.frame(tsAll[,colnames(tsAll) != 'attritionRate']))
+plot(XTest$attritionRate,type='l',ylim =c(0,0.011))
+lines(seq(1,TestSize),nnTest$mean,col='red')
+```
+
+### d. ASE
+```{r}
+nnASE = mean((tsTest[,'attritionRate'] - nnTest$mean)^2)
+
+```
+The ASE of the model is `r format(round(varASE,8),scientific=FALSE)`
+
+
+## Ensamble
+
+The Neural Network model has a great ASE performance, but it is not feasable for the business as we need to know the future values of the exogenous variables to calculate the attrition rate prediction. The business has no information about these future values. Furthermore, we cannot predict these valuas as is will increase the error rate and confidence interval. 
+
+So the best models for the business are VAR and ARMA(3,2). 
+
+We used a **Neural Network** algorithm to combine and improve the predictions of VAR and ARMA models. The model uses the predictions obtained from VAR and ARMA models as predictors, and the real attrition rate as target. This model can then be used to predit the future attrition values.
+
+### a. Selecting Train and Test datasets
+
+We used the first 2/3 of the train dataset to fit the VAR and ARIMA models, then the last 1/3 of the train dataset to fit the **ensamble model** based on the output of the first two models. We will then use the test dataset (12 months) to measure the performance of the ensemble model.
+
+```{r}
+#https://www.analyticsvidhya.com/blog/2018/06/comprehensive-guide-for-ensemble-models/
+ensTrain = head(XTrain,nrow(XTrain)*2/3)
+ensTrain2  = tail(XTrain,nrow(XTrain)*1/3)
+```
+
+### b1. Base Models Training
+
+```{r}
+## ARMA Training from the 2/3 of train dataset
+ensARMA= tswge::fore.aruma.wge(ensTrain$attritionRate
+                               ,phi = es$phi,theta = es$theta,s=s
+                               ,n.ahead = nrow(ensTrain2),lastn = F)
+ensARMAPred  = ensARMA$f
+
+## VAR Training from  the 2/3 of train dataset
+ensVAR= VAR(ensTrain,p=6,type='trend',season=3,exogen=NULL)
+ensVARPred =  predict(ensVAR,n.ahead=nrow(ensTrain2))$fcst$attritionRate[,1]
+
+## Plotting Predictions for the remaining 1/3 of the training dataset
+plot(1:nrow(ensTrain2),ensTrain2$attritionRate, type='l',lwd=2)
+lines(1:nrow(ensTrain2),ensARMAPred,col='red')
+lines(1:nrow(ensTrain2),ensVARPred,col='blue')
+```
+
+We can see that the VAR prediction has a pattern similar to the prediction, while the ANOVA stays around the mean.
+
+### b2. Ensemble Modeling
+```{r}
+## Training the ensambling (Neural Network Model)
+set.seed(1701)
+tsensTrain2 = tail(tsTrain,nrow(ensTrain2))
+ensFit = nnfor::mlp(y=tsensTrain2[,'attritionRate'],reps=40
+                    ,xreg = data.frame(ARMA = ts(ensARMAPred,start=min(time(tsensTrain2)),frequency=12)
+                                       ,VAR = ts(ensVARPred,start=min(time(tsensTrain2)),frequency=12) )
+                    ,difforder = NULL,hd.auto.type = 'cv',hd=NULL,lags=NULL)
+ensFit
+plot(ensFit)
+
+```
+
+The Neural Network Enseble is using 2 regressors.
+
+### c. Model Testing Plot
+
+We are now proceeding to test the ensamble model for the Test dataset 
+
+```{r}
+#prediction from ARMA for the  test dataset
+ensARMATestPred = tswge::fore.aruma.wge(XTrain$attritionRate
+                               ,phi = es$phi,theta = es$theta,s=s
+                               ,n.ahead =TestSize,lastn = F)$f
+
+#prediction from   for the  test dataset
+ensVARTest= VAR(XTrain,p=6,type='trend',season=3,exogen=NULL)
+ensVARTestPred =  predict(ensVAR,n.ahead=nrow(XTest))$fcst$attritionRate[,1]
+
+#prediction from Ensemble (combining the predictions from ARMA and VAR)
+ensTest=forecast(ensFit,h=TestSize,xreg =data.frame(
+  ARMA = c(ensARMAPred, ensARMATestPred)
+  ,VAR =  c(ensVARPred, ensVARTestPred)))
+  #ARMA =  ts(c(ensARMAPred, ensARMATestPred),start=min(time(tsensTrain2)),frequency=12)
+  #,VAR =  ts(c(ensVARPred, ensVARTestPred),start=min(time(tsensTrain2)),frequency=12)))
+plot(XTest$attritionRate,type='l',ylim =c(0,0.011))
+lines(seq(1,TestSize),ensTest$mean,col='red')
+```
+
+we can see from the plot that the prediction looks very close to the real data.
+
+### d. ASE
+```{r}
+ensASE = mean((tsTest[,'attritionRate'] - ensTest$mean)^2)
+```
+
+The ASE of the ensemble model is `r format(round(ensASE,8),scientific=FALSE)`
+
+# 5. Comparing Models
+
+Here the ASE performance of the three models
+
+| Model | ASE |
+|-------|-----|
+| ARMA(3,2) | `r format(round(armaASE,8),scientific=FALSE)` |
+| VAR | `r format(round(varASE,8),scientific=FALSE)` |
+| Neural Network | `r format(round(nnASE,8),scientific=FALSE)` |
+| Ensemble | `r format(round(ensASE,8),scientific=FALSE)` |
+
+The ASE shows the Ensemble Model has the best Performance.
+
+# 6. Forecast
+
+We use a forecast horizon of 12 months, as it is most realisting intervention time for the company and the speed of the market it is operating in. We are also going to use the **Ensemble Model** to predict  Future Values. 
+
+To run the ensamble model, we need first to create the predictions from the VAR and ARMA models, then we will use the fitted ensemble model to generate the future predictions.
+
+NOTE: The package NNFOR doesn't provide confidence intervals for MLP function [link](https://r.789695.n4.nabble.com/Confidence-Intervals-with-mlp-forecasts-td4758966.html). We will plot, instead, the predictions from all the runs of the Neural Network model.
+
+```{r}
+horizon = 12
+#prediction from ARMA
+ensARMAFuturePred = tswge::fore.aruma.wge(X$attritionRate
+                               ,phi = es$phi,theta = es$theta,s=s
+                               ,n.ahead =horizon,lastn = F,plot=F)$f
+
+#prediction from VAR
+ensVARFuture = VAR(X,p=6,type='trend',season=3,exogen=NULL)
+ensVARFuturePred =  predict(ensVARFuture,n.ahead=horizon)$fcst$attritionRate[,1]
+
+#Ensamble model
+
+##prediction from Ensemble
+ensFuture=forecast(ensFit,h=TestSize,xreg =data.frame(
+  ARMA =  c(ensARMAPred, ensARMAFuturePred)
+  ,VAR =  c(ensVARPred, ensVARFuturePred))
+  ,level=0.95)
+#plot(ensFuture)
+reps <- dim(ensFuture$all.mean)[2]
+ts.plot(tsTrain[,'attritionRate'], ensFuture$all.mean, ensFuture$mean, col = c('black',rep("grey",reps), "blue"), lwd = c(1,rep(1, reps), 2))
+#showLast = 50
+#plot(tail(X$attritionRate,showLast),type='l',xlim=c(1,showLast+horizon))
+#lines((showLast+1):(horizon + showLast),ensFuture$mean,col='red')
+#lines((showLast+1):(horizon + showLast),ensFuture$low,col='red')
+```
+
+We can see the forecast follows the pattern and sycles of the previous values, this is in line with the business expectations.
+
