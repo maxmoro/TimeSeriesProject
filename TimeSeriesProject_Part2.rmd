@@ -216,6 +216,20 @@ armaASE = ase(armaPred$f,x)
 
 The ASE of the model is `r format(round(armaASE,8),scientific=FALSE)`
 
+
+### f. Checking for Residuals
+
+```{r}
+armaRes = armaPred$resid
+p=tswge::plotts.sample.wge(armaRes,arlimits = T)
+lj1=tswge::ljung.wge(armaRes,p=3,q=2,K=24)
+lj2=tswge::ljung.wge(armaRes,p=3,q=2,K=48)
+message('Ljung-Box Test with K=24 P-value = ',lj1$pval)
+message('Ljung-Box Test with K=48. P-value = ',lj2$pval)
+```
+
+We visually see a couple of correaltions outside the whit-noise level, and  the Ling-Box test shows that we cannot reject the null hypothesis we have white noise
+
 ## VAR
 
 ### a. Selecting multivariate data
@@ -259,7 +273,7 @@ We can deduct the model may use lags up to 6.
 vars::VARselect(XTrain, lag.max = 7, type = 'trend',season = 3, exogen = NULL)
 ```
 
-The model selected a lag order of 1 using a BIC measure ($HQ(n)$).
+The model selected by VARSelect as a lag order of 1 using a BIC measure ($HQ(n)$).
 
 
 ### c. Model Training
@@ -285,9 +299,10 @@ AIC(varFit)
 ### e. Model Testing Plot
 
 ```{r}
-varPred = predict(varFit,n.ahead=TestSize)$fcst$attritionRate[,1]
+varPred = predict(varFit,n.ahead=TestSize)
+varPredFcst = varPred$fcst$attritionRate[,1]
 varDataPred = cbind(dataTot,pred=NA)
-varDataPred[(nrow(varDataPred)-TestSize+1):nrow(varDataPred),]$pred = varPred
+varDataPred[(nrow(varDataPred)-TestSize+1):nrow(varDataPred),]$pred = varPredFcst
 ggplot(data=varDataPred,aes(x=timeID,y=attritionRate)) +
   geom_line() + 
   geom_line(aes(y=pred),color='red')
@@ -296,10 +311,21 @@ ggplot(data=varDataPred,aes(x=timeID,y=attritionRate)) +
 ### f. ASE
 
 ```{r}
-varASE = ase(varPred,tail(dataTot,TestSize)$attritionRate)
+varASE = ase(varPredFcst,tail(dataTot,TestSize)$attritionRate)
 ```
 
 The ASE of the model is `r format(round(varASE,8),scientific=FALSE)`
+
+### g. Checking for residuals
+
+```{r}
+varRes  =varPred$model$varresult$attritionRate$residuals
+p=tswge::plotts.sample.wge(varRes,arlimits = T)
+lj1=tswge::ljung.wge(varRes,p=3,q=2,K=24)
+lj2=tswge::ljung.wge(varRes,p=3,q=2,K=48)
+message('Ljung-Box Test with K=24 P-value = ',lj1$pval)
+message('Ljung-Box Test with K=48. P-value = ',lj2$pval)
+```
 
 ## Neural Network
 
