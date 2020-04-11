@@ -220,7 +220,7 @@ The ASE of the model is `r format(round(armaASE,8),scientific=FALSE)`
 ### f. Checking for Residuals
 
 ```{r}
-armaRes = armaPred$resid
+armaRes = es$res
 p=tswge::plotts.sample.wge(armaRes,arlimits = T)
 lj1=tswge::ljung.wge(armaRes,p=3,q=2,K=24)
 lj2=tswge::ljung.wge(armaRes,p=3,q=2,K=48)
@@ -319,12 +319,8 @@ The ASE of the model is `r format(round(varASE,8),scientific=FALSE)`
 ### g. Checking for residuals
 
 ```{r}
-varRes  =varPred$model$varresult$attritionRate$residuals
+varRes  =varFit$varresult$attritionRate$residuals
 p=tswge::plotts.sample.wge(varRes,arlimits = T)
-lj1=tswge::ljung.wge(varRes,p=3,q=2,K=24)
-lj2=tswge::ljung.wge(varRes,p=3,q=2,K=48)
-message('Ljung-Box Test with K=24 P-value = ',lj1$pval)
-message('Ljung-Box Test with K=48. P-value = ',lj2$pval)
 ```
 
 ## Neural Network
@@ -371,6 +367,12 @@ nnASE = mean((tsTest[,'attritionRate'] - nnTest$mean)^2)
 ```
 The ASE of the model is `r format(round(varASE,8),scientific=FALSE)`
 
+### e. Checking for residuals
+
+```{r}
+nnRes  =nnTest$residuals
+p=tswge::plotts.sample.wge(nnRes,arlimits = T)
+```
 
 ## Ensamble
 
@@ -435,7 +437,7 @@ We are now proceeding to test the ensamble model for the Test dataset
 #prediction from ARMA for the  test dataset
 ensARMATestPred = tswge::fore.aruma.wge(XTrain$attritionRate
                                ,phi = es$phi,theta = es$theta,s=s
-                               ,n.ahead =TestSize,lastn = F)$f
+                               ,n.ahead =TestSize,lastn = F,plot=F)$f
 
 #prediction from   for the  test dataset
 ensVARTest= VAR(XTrain,p=6,type='trend',season=3,exogen=NULL)
@@ -458,6 +460,12 @@ we can see from the plot that the prediction looks very close to the real data.
 ensASE = mean((tsTest[,'attritionRate'] - ensTest$mean)^2)
 ```
 
+### e. Checking for residuals
+
+```{r}
+nnRes  =ensTest$residuals
+p=tswge::plotts.sample.wge(nnRes,arlimits = T)
+```
 The ASE of the ensemble model is `r format(round(ensASE,8),scientific=FALSE)`
 
 # 5. Comparing Models
